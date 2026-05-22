@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Yaris Bounce</title>
+<title>Bouncing Yaris</title>
+<link rel="icon" type="image/png" href="Yaris.png">
 <style>
+  
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { overflow: hidden; }
 canvas#three { display: block; }
@@ -57,6 +59,21 @@ hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); }
 <div id="panel">
   <div class="row">
     <div class="row-inline">
+      <label>Background</label>
+      <input type="color" id="bg-color" value="#ffffff">
+    </div>
+  </div>
+  <hr>
+  <div class="row">
+    <div class="row-inline">
+      <label>Volume</label>
+      <span class="val" id="vol-val">100%</span>
+    </div>
+    <input type="range" id="vol-range" min="0" max="100" value="100">
+  </div>
+  <hr>
+  <div class="row">
+    <div class="row-inline">
       <label>BPM</label>
       <span class="val" id="bpm-val">135</span>
     </div>
@@ -65,22 +82,15 @@ hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); }
   <hr>
   <div class="row">
     <div class="row-inline">
-      <label>bounce amount</label>
+      <label>Bounce Amount</label>
       <span class="val" id="bounce-val">2.00</span>
     </div>
     <input type="range" id="bounce-range" min="0" max="2" step="0.05" value="2.0">
   </div>
   <hr>
   <div id="curve-wrap">
-    <label>squash curve &nbsp;<span class="curve-hint">drag handles</span></label>
+    <label>Squash Curve &nbsp;<span class="curve-hint">Drag Handles</span></label>
     <canvas id="curve-canvas" width="228" height="120"></canvas>
-  </div>
-  <hr>
-  <div class="row">
-    <div class="row-inline">
-      <label>background</label>
-      <input type="color" id="bg-color" value="#ffffff">
-    </div>
   </div>
 </div>
 
@@ -88,11 +98,10 @@ hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); }
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script>
 
-
-var DEFAULT_BG      = '#ffffff';
-var DEFAULT_BPM     = 135;
-var DEFAULT_BOUNCE  = 2.0;
-var DEFAULT_GROUND  = 0.65;  
+var DEFAULT_BG     = '#ffffff';
+var DEFAULT_BPM    = 135;
+var DEFAULT_BOUNCE = 2.0;
+var DEFAULT_GROUND = 0.65;
 
 var bgm = document.getElementById('bgm');
 document.addEventListener('click', function startAudio() {
@@ -155,24 +164,80 @@ scene.add(rim);
 var groundMat = new THREE.MeshLambertMaterial({ color: bgColor.clone().multiplyScalar(DEFAULT_GROUND) });
 var ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), groundMat);
 ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.001;
 ground.receiveShadow = true;
 scene.add(ground);
 
-var roadMat = new THREE.MeshLambertMaterial({ color: 0x1e1e2e });
-var road = new THREE.Mesh(new THREE.PlaneGeometry(5.5, 200), roadMat);
-road.rotation.x = -Math.PI / 2;
-road.position.y = 0.001;
-road.receiveShadow = true;
-scene.add(road);
 
-for (var i = -33; i <= 33; i++) {
-  var dash = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.14, 1.6),
-    new THREE.MeshLambertMaterial({ color: 0xeecc00 })
-  );
-  dash.rotation.x = -Math.PI / 2;
-  dash.position.set(0, 0.002, i * 3);
-  scene.add(dash);
+var CHUNK_LEN   = 12;
+var ROAD_WIDTH  = 5.5;
+var DASH_SPACING = 3;
+var ROAD_SPEED  = 8;
+var NUM_CHUNKS  = 20; 
+
+var roadMat  = new THREE.MeshLambertMaterial({ color: 0x1e1e2e, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+var dashMat  = new THREE.MeshLambertMaterial({ color: 0xeecc00, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+
+var chunks = [];
+var roadOffset = 0;
+
+function makeChunk(zStart) {
+  var group = new THREE.Group();
+
+  var roadSeg = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_WIDTH, CHUNK_LEN), roadMat);
+  roadSeg.rotation.x = -Math.PI / 2;
+  roadSeg.position.set(0, 0.001, zStart + CHUNK_LEN * 0.5);
+  roadSeg.receiveShadow = true;
+  group.add(roadSeg);
+
+  var dashCount = Math.ceil(CHUNK_LEN / DASH_SPACING);
+  for (var d = 0; d < dashCount; d++) {
+    var dz = zStart + d * DASH_SPACING + DASH_SPACING * 0.5;
+    var dash = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 1.6), dashMat);
+    dash.rotation.x = -Math.PI / 2;
+    dash.position.set(0, 0.002, dz);
+    group.add(dash);
+  }
+
+  scene.add(group);
+  return { group: group, zStart: zStart };
+}
+
+for (var ci = 0; ci < NUM_CHUNKS; ci++) {
+  var startZ = -80 + ci * (120 / NUM_CHUNKS);
+  chunks.push(makeChunk(startZ));
+}
+
+function frontmostZ() {
+  var max = -Infinity;
+  for (var i = 0; i < chunks.length; i++) max = Math.max(max, chunks[i].zStart);
+  return max;
+}
+function rearmostChunk() {
+  var max = -Infinity, idx = 0;
+  for (var i = 0; i < chunks.length; i++) {
+    if (chunks[i].zStart > max) { max = chunks[i].zStart; idx = i; }
+  }
+  return idx;
+}
+
+function updateRoad(dt) {
+  var dz = ROAD_SPEED * dt;
+  for (var i = 0; i < chunks.length; i++) {
+    chunks[i].group.position.z -= dz;
+    chunks[i].zStart -= dz;
+  }
+
+  var CULL_Z = -80;
+  for (var i = 0; i < chunks.length; i++) {
+    if (chunks[i].zStart < CULL_Z) {
+      var newZ = frontmostZ() + CHUNK_LEN;
+      var group = chunks[i].group;
+      var shift = newZ - chunks[i].zStart;
+      group.position.z += shift;
+      chunks[i].zStart = newZ;
+    }
+  }
 }
 
 var carGroup = new THREE.Group();
@@ -208,7 +273,6 @@ loader.load('Yaris.glb', function(gltf) {
   var box3 = new THREE.Box3().setFromObject(model);
   var center = new THREE.Vector3();
   box3.getCenter(center);
-
   model.position.x -= center.x;
   model.position.y = -(box3.min.y - center.y);
   model.position.z -= center.z;
@@ -228,10 +292,7 @@ var draggingHandle = null;
 
 function toCanvas(p) {
   var W = cc.width, H = cc.height, PAD = 12;
-  return {
-    x: PAD + p.x * (W - PAD*2),
-    y: (H - PAD) - p.y * (H - PAD*2)
-  };
+  return { x: PAD + p.x * (W - PAD*2), y: (H - PAD) - p.y * (H - PAD*2) };
 }
 function fromCanvas(cx_, cy_) {
   var W = cc.width, H = cc.height, PAD = 12;
@@ -240,7 +301,6 @@ function fromCanvas(cx_, cy_) {
     y: Math.max(0, Math.min(1, ((H - PAD) - cy_) / (H - PAD*2)))
   };
 }
-
 function bezier(t) {
   var mt = 1 - t;
   return {
@@ -248,7 +308,6 @@ function bezier(t) {
     y: mt*mt*mt*p0.y + 3*mt*mt*t*p1.y + 3*mt*t*t*p2.y + t*t*t*p3.y
   };
 }
-
 function sampleByX(x) {
   var lo = 0, hi = 1, mid, pt;
   for (var iter = 0; iter < 16; iter++) {
@@ -259,30 +318,25 @@ function sampleByX(x) {
   return Math.max(0, bezier(mid).y);
 }
 
+var currentBeatPhase = 0;
+
 function drawCurve() {
   var W = cc.width, H = cc.height;
   cx.clearRect(0, 0, W, H);
-
   cx.strokeStyle = 'rgba(255,255,255,0.06)';
   cx.lineWidth = 1;
   for (var g = 0; g <= 4; g++) {
-    var gx = toCanvas({ x: g/4, y: 0 });
-    var gy = toCanvas({ x: 0, y: g/4 });
-    cx.beginPath(); cx.moveTo(gx.x, 0); cx.lineTo(gx.x, H); cx.stroke();
-    cx.beginPath(); cx.moveTo(0, gy.y); cx.lineTo(W, gy.y); cx.stroke();
+    var gx2 = toCanvas({ x: g/4, y: 0 });
+    var gy2 = toCanvas({ x: 0, y: g/4 });
+    cx.beginPath(); cx.moveTo(gx2.x, 0); cx.lineTo(gx2.x, H); cx.stroke();
+    cx.beginPath(); cx.moveTo(0, gy2.y); cx.lineTo(W, gy2.y); cx.stroke();
   }
-
-  var b0 = toCanvas(p0), b3 = toCanvas(p3);
-  cx.strokeStyle = 'rgba(255,255,255,0.12)';
-  cx.beginPath(); cx.moveTo(b0.x, b0.y); cx.lineTo(b3.x, b3.y); cx.stroke();
-
   var cp0 = toCanvas(p0), cp1 = toCanvas(p1), cp2 = toCanvas(p2), cp3 = toCanvas(p3);
   cx.strokeStyle = 'rgba(255,255,255,0.2)';
   cx.setLineDash([3,3]);
   cx.beginPath(); cx.moveTo(cp0.x, cp0.y); cx.lineTo(cp1.x, cp1.y); cx.stroke();
   cx.beginPath(); cx.moveTo(cp3.x, cp3.y); cx.lineTo(cp2.x, cp2.y); cx.stroke();
   cx.setLineDash([]);
-
   cx.strokeStyle = '#e63946';
   cx.lineWidth = 2;
   cx.beginPath();
@@ -293,13 +347,11 @@ function drawCurve() {
     cx.lineTo(pt.x, pt.y);
   }
   cx.stroke();
-
   [p0, p3].forEach(function(p) {
     var c = toCanvas(p);
     cx.beginPath(); cx.arc(c.x, c.y, 4, 0, Math.PI*2);
     cx.fillStyle = 'rgba(255,255,255,0.3)'; cx.fill();
   });
-
   [p1, p2].forEach(function(p, i) {
     var c = toCanvas(p);
     cx.beginPath(); cx.arc(c.x, c.y, HANDLE_R, 0, Math.PI*2);
@@ -307,7 +359,6 @@ function drawCurve() {
     cx.fill();
     cx.strokeStyle = 'rgba(255,255,255,0.4)'; cx.lineWidth = 1.5; cx.stroke();
   });
-
   var phX = toCanvas({ x: currentBeatPhase, y: 0 });
   cx.strokeStyle = 'rgba(255,255,255,0.4)';
   cx.lineWidth = 1;
@@ -325,7 +376,6 @@ function getHandle(px_, py_) {
   }
   return null;
 }
-
 cc.addEventListener('mousedown', function(e) {
   var rect = cc.getBoundingClientRect();
   var mx = (e.clientX - rect.left) * (cc.width / rect.width);
@@ -339,13 +389,8 @@ window.addEventListener('mousemove', function(e) {
   var mx = (e.clientX - rect.left) * (cc.width / rect.width);
   var my = (e.clientY - rect.top)  * (cc.height / rect.height);
   var n = fromCanvas(mx, my);
-  if (draggingHandle === 'p1') {
-    p1.x = Math.max(0, Math.min(1, n.x));
-    p1.y = Math.max(0, Math.min(1, n.y));
-  } else {
-    p2.x = Math.max(0, Math.min(1, n.x));
-    p2.y = Math.max(0, Math.min(1, n.y));
-  }
+  if (draggingHandle === 'p1') { p1.x = Math.max(0, Math.min(1, n.x)); p1.y = Math.max(0, Math.min(1, n.y)); }
+  else                          { p2.x = Math.max(0, Math.min(1, n.x)); p2.y = Math.max(0, Math.min(1, n.y)); }
   drawCurve();
 });
 
@@ -353,23 +398,21 @@ var bpm = DEFAULT_BPM;
 var totalTime = 0;
 var BOUNCE_AMP = DEFAULT_BOUNCE;
 var clock = new THREE.Clock();
-var currentBeatPhase = 0;
 
 function animate() {
   requestAnimationFrame(animate);
   var dt = Math.min(clock.getDelta(), 0.05);
   totalTime += dt;
 
-  currentBeatPhase = (totalTime * bpm / 60) % 1.0;
+  updateRoad(dt);
 
+  currentBeatPhase = (totalTime * bpm / 60) % 1.0;
   var squashVal = sampleByX(currentBeatPhase);
   var squash = BOUNCE_AMP * squashVal;
-
   var sx = 1 + squash * 0.30;
   var sy = 1 - squash * 0.25;
   carGroup.position.y = 0;
   carGroup.scale.set(sx, sy, sx);
-
   shadowBlob.material.opacity = 0.28 + squash * 0.1;
   shadowBlob.scale.set(sx, 1, sx);
 
@@ -378,7 +421,6 @@ function animate() {
   drawCurve();
 }
 animate();
-
 
 document.getElementById('bpm-val').textContent = DEFAULT_BPM;
 document.getElementById('bounce-val').textContent = DEFAULT_BOUNCE.toFixed(2);
@@ -395,17 +437,44 @@ document.getElementById('bounce-range').addEventListener('input', function(e) {
   BOUNCE_AMP = parseFloat(e.target.value);
   document.getElementById('bounce-val').textContent = BOUNCE_AMP.toFixed(2);
 });
+document.getElementById('vol-range').addEventListener('input', function(e) {
+  var v = parseInt(e.target.value);
+  bgm.volume = v / 100;
+  document.getElementById('vol-val').textContent = v + '%';
+});
+function updateCredit(hexColor) {
+  var r = parseInt(hexColor.slice(1,3),16);
+  var g = parseInt(hexColor.slice(3,5),16);
+  var b = parseInt(hexColor.slice(5,7),16);
+  var brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  var isDark = brightness < 128;
+  var creditCol = isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
+  document.getElementById('credit-link').style.color = creditCol;
+  document.getElementById('credit-icon').src = isDark ? 'github-light.svg' : 'github-dark.svg';
+}
+
 document.getElementById('bg-color').addEventListener('input', function(e) {
   var col = new THREE.Color(e.target.value);
   scene.background = col.clone();
   scene.fog = new THREE.FogExp2(col.getHex(), 0.04);
   groundMat.color.copy(col).multiplyScalar(DEFAULT_GROUND);
+  updateCredit(e.target.value);
 });
+
+updateCredit(DEFAULT_BG);
 window.addEventListener('resize', function() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
 </script>
+
+<div style="position:fixed;bottom:12px;right:14px;z-index:100;font-family:monospace;font-size:11px;">
+  <a id="credit-link" href="https://github.com/AliMoghimii" target="_blank" style="text-decoration:none;display:flex;align-items:center;gap:5px;">
+    <img id="credit-icon" src="github-dark.svg" style="width:13px;height:13px;opacity:0.3;">
+    © Ali Moghimi
+  </a>
+</div>
+</body>
 </body>
 </html>
