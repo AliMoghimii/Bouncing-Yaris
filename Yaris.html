@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Yaris Bounce</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; }
+canvas#three { display: block; }
+
+#menu-btn {
+  position: fixed; top: 14px; left: 14px; z-index: 100;
+  background: rgba(20,20,35,0.85); color: #ccc;
+  border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;
+  padding: 6px 12px; font-size: 13px; font-family: monospace;
+  cursor: pointer; user-select: none; letter-spacing: 1px;
+}
+#menu-btn:hover { background: rgba(40,40,60,0.95); }
+
+#panel {
+  position: fixed; top: 44px; left: 14px; z-index: 99;
+  background: rgba(14,14,26,0.95); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px; padding: 16px; width: 260px;
+  font-family: monospace; font-size: 12px; color: #aaa;
+  display: none; flex-direction: column; gap: 12px;
+  backdrop-filter: blur(8px);
+}
+#panel.open { display: flex; }
+.row { display: flex; flex-direction: column; gap: 5px; }
+.row label { color: #888; letter-spacing: 0.5px; }
+.row-inline { display: flex; align-items: center; justify-content: space-between; }
+input[type=range] { width: 100%; accent-color: #e63946; cursor: pointer; }
+input[type=color] {
+  width: 36px; height: 24px; border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px; background: none; cursor: pointer; padding: 1px;
+}
+.val { color: #fff; min-width: 36px; text-align: right; }
+hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); }
+
+#curve-wrap { display: flex; flex-direction: column; gap: 4px; }
+#curve-wrap label { color: #888; letter-spacing: 0.5px; font-size: 11px; }
+#curve-canvas {
+  width: 100%; height: 120px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px; cursor: crosshair;
+  background: rgba(0,0,0,0.3);
+}
+.curve-hint { color: rgba(255,255,255,0.25); font-size: 10px; }
+</style>
+</head>
+<body>
+
+<canvas id="three"></canvas>
+<audio id="bgm" src="Niko B - Whys this dealer.mp3" loop></audio>
+
+<button id="menu-btn">settings</button>
+<div id="panel">
+  <div class="row">
+    <div class="row-inline">
+      <label>BPM</label>
+      <span class="val" id="bpm-val">135</span>
+    </div>
+    <input type="range" id="bpm-range" min="40" max="220" value="135">
+  </div>
+  <hr>
+  <div class="row">
+    <div class="row-inline">
+      <label>bounce amount</label>
+      <span class="val" id="bounce-val">2.00</span>
+    </div>
+    <input type="range" id="bounce-range" min="0" max="2" step="0.05" value="2.0">
+  </div>
+  <hr>
+  <div id="curve-wrap">
+    <label>squash curve &nbsp;<span class="curve-hint">drag handles</span></label>
+    <canvas id="curve-canvas" width="228" height="120"></canvas>
+  </div>
+  <hr>
+  <div class="row">
+    <div class="row-inline">
+      <label>background</label>
+      <input type="color" id="bg-color" value="#ffffff">
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+
+
+var DEFAULT_BG      = '#ffffff';
+var DEFAULT_BPM     = 135;
+var DEFAULT_BOUNCE  = 2.0;
+var DEFAULT_GROUND  = 0.65;  
+
+var bgm = document.getElementById('bgm');
+document.addEventListener('click', function startAudio() {
+  bgm.play();
+  document.removeEventListener('click', startAudio);
+}, { once: true });
+
+var threeCanvas = document.getElementById('three');
+var renderer = new THREE.WebGLRenderer({ antialias: true, canvas: threeCanvas });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+
+var bgColor = new THREE.Color(DEFAULT_BG);
+var scene = new THREE.Scene();
+scene.background = bgColor.clone();
+scene.fog = new THREE.FogExp2(bgColor.getHex(), 0.04);
+
+var camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 200);
+var camTheta = 0.4, camPhi = 0.25, camRadius = 11;
+var target = new THREE.Vector3(0, 0.5, 0);
+
+function updateCamera() {
+  camera.position.x = target.x + camRadius * Math.cos(camPhi) * Math.sin(camTheta);
+  camera.position.y = target.y + camRadius * Math.sin(camPhi);
+  camera.position.z = target.z + camRadius * Math.cos(camPhi) * Math.cos(camTheta);
+  camera.lookAt(target);
+}
+updateCamera();
+
+var isDragging = false, lastX = 0, lastY = 0;
+renderer.domElement.addEventListener('mousedown', function(e) {
+  isDragging = true; lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener('mouseup', function() { isDragging = false; });
+window.addEventListener('mousemove', function(e) {
+  if (!isDragging) return;
+  camTheta -= (e.clientX - lastX) * 0.005;
+  camPhi = Math.max(0.05, Math.min(1.3, camPhi + (e.clientY - lastY) * 0.005));
+  lastX = e.clientX; lastY = e.clientY;
+});
+renderer.domElement.addEventListener('wheel', function(e) {
+  camRadius = Math.max(4, Math.min(25, camRadius + e.deltaY * 0.02));
+});
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+var sun = new THREE.DirectionalLight(0xfff0cc, 1.3);
+sun.position.set(6, 10, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.width = 2048;
+sun.shadow.mapSize.height = 2048;
+sun.shadow.camera.left = -8; sun.shadow.camera.right = 8;
+sun.shadow.camera.top = 8;  sun.shadow.camera.bottom = -8;
+sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 40;
+scene.add(sun);
+var rim = new THREE.DirectionalLight(0x4466ff, 0.4);
+rim.position.set(-5, 3, -4);
+scene.add(rim);
+
+var groundMat = new THREE.MeshLambertMaterial({ color: bgColor.clone().multiplyScalar(DEFAULT_GROUND) });
+var ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+var roadMat = new THREE.MeshLambertMaterial({ color: 0x1e1e2e });
+var road = new THREE.Mesh(new THREE.PlaneGeometry(5.5, 200), roadMat);
+road.rotation.x = -Math.PI / 2;
+road.position.y = 0.001;
+road.receiveShadow = true;
+scene.add(road);
+
+for (var i = -33; i <= 33; i++) {
+  var dash = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.14, 1.6),
+    new THREE.MeshLambertMaterial({ color: 0xeecc00 })
+  );
+  dash.rotation.x = -Math.PI / 2;
+  dash.position.set(0, 0.002, i * 3);
+  scene.add(dash);
+}
+
+var carGroup = new THREE.Group();
+scene.add(carGroup);
+
+var shadowBlob = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.0, 2.0),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 })
+);
+shadowBlob.rotation.x = -Math.PI / 2;
+shadowBlob.position.y = 0.003;
+scene.add(shadowBlob);
+
+var modelLoaded = false;
+function useCubeFallback() {
+  if (modelLoaded) return;
+  modelLoaded = true;
+  var cube = new THREE.Mesh(
+    new THREE.BoxGeometry(1.0, 1.0, 2.5),
+    new THREE.MeshLambertMaterial({ color: 0xe63946 })
+  );
+  cube.position.y = 0.5;
+  cube.castShadow = true;
+  cube.receiveShadow = true;
+  carGroup.add(cube);
+}
+
+var loader = new THREE.GLTFLoader();
+loader.load('Yaris.glb', function(gltf) {
+  modelLoaded = true;
+  var model = gltf.scene;
+  model.traverse(function(c) { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+  var box3 = new THREE.Box3().setFromObject(model);
+  var center = new THREE.Vector3();
+  box3.getCenter(center);
+
+  model.position.x -= center.x;
+  model.position.y = -(box3.min.y - center.y);
+  model.position.z -= center.z;
+  carGroup.add(model);
+}, null, function() { useCubeFallback(); });
+
+var cc = document.getElementById('curve-canvas');
+var cx = cc.getContext('2d');
+
+var p0 = { x: 0.0, y: 0.0 };
+var p1 = { x: 0.0, y: 0.0 };
+var p2 = { x: 0.9, y: 1.0 };
+var p3 = { x: 1.0, y: 0.0 };
+
+var HANDLE_R = 7;
+var draggingHandle = null;
+
+function toCanvas(p) {
+  var W = cc.width, H = cc.height, PAD = 12;
+  return {
+    x: PAD + p.x * (W - PAD*2),
+    y: (H - PAD) - p.y * (H - PAD*2)
+  };
+}
+function fromCanvas(cx_, cy_) {
+  var W = cc.width, H = cc.height, PAD = 12;
+  return {
+    x: Math.max(0, Math.min(1, (cx_ - PAD) / (W - PAD*2))),
+    y: Math.max(0, Math.min(1, ((H - PAD) - cy_) / (H - PAD*2)))
+  };
+}
+
+function bezier(t) {
+  var mt = 1 - t;
+  return {
+    x: mt*mt*mt*p0.x + 3*mt*mt*t*p1.x + 3*mt*t*t*p2.x + t*t*t*p3.x,
+    y: mt*mt*mt*p0.y + 3*mt*mt*t*p1.y + 3*mt*t*t*p2.y + t*t*t*p3.y
+  };
+}
+
+function sampleByX(x) {
+  var lo = 0, hi = 1, mid, pt;
+  for (var iter = 0; iter < 16; iter++) {
+    mid = (lo + hi) * 0.5;
+    pt = bezier(mid);
+    if (pt.x < x) lo = mid; else hi = mid;
+  }
+  return Math.max(0, bezier(mid).y);
+}
+
+function drawCurve() {
+  var W = cc.width, H = cc.height;
+  cx.clearRect(0, 0, W, H);
+
+  cx.strokeStyle = 'rgba(255,255,255,0.06)';
+  cx.lineWidth = 1;
+  for (var g = 0; g <= 4; g++) {
+    var gx = toCanvas({ x: g/4, y: 0 });
+    var gy = toCanvas({ x: 0, y: g/4 });
+    cx.beginPath(); cx.moveTo(gx.x, 0); cx.lineTo(gx.x, H); cx.stroke();
+    cx.beginPath(); cx.moveTo(0, gy.y); cx.lineTo(W, gy.y); cx.stroke();
+  }
+
+  var b0 = toCanvas(p0), b3 = toCanvas(p3);
+  cx.strokeStyle = 'rgba(255,255,255,0.12)';
+  cx.beginPath(); cx.moveTo(b0.x, b0.y); cx.lineTo(b3.x, b3.y); cx.stroke();
+
+  var cp0 = toCanvas(p0), cp1 = toCanvas(p1), cp2 = toCanvas(p2), cp3 = toCanvas(p3);
+  cx.strokeStyle = 'rgba(255,255,255,0.2)';
+  cx.setLineDash([3,3]);
+  cx.beginPath(); cx.moveTo(cp0.x, cp0.y); cx.lineTo(cp1.x, cp1.y); cx.stroke();
+  cx.beginPath(); cx.moveTo(cp3.x, cp3.y); cx.lineTo(cp2.x, cp2.y); cx.stroke();
+  cx.setLineDash([]);
+
+  cx.strokeStyle = '#e63946';
+  cx.lineWidth = 2;
+  cx.beginPath();
+  var start = toCanvas(bezier(0));
+  cx.moveTo(start.x, start.y);
+  for (var s = 1; s <= 80; s++) {
+    var pt = toCanvas(bezier(s / 80));
+    cx.lineTo(pt.x, pt.y);
+  }
+  cx.stroke();
+
+  [p0, p3].forEach(function(p) {
+    var c = toCanvas(p);
+    cx.beginPath(); cx.arc(c.x, c.y, 4, 0, Math.PI*2);
+    cx.fillStyle = 'rgba(255,255,255,0.3)'; cx.fill();
+  });
+
+  [p1, p2].forEach(function(p, i) {
+    var c = toCanvas(p);
+    cx.beginPath(); cx.arc(c.x, c.y, HANDLE_R, 0, Math.PI*2);
+    cx.fillStyle = i === 0 ? '#4fc3f7' : '#ffa726';
+    cx.fill();
+    cx.strokeStyle = 'rgba(255,255,255,0.4)'; cx.lineWidth = 1.5; cx.stroke();
+  });
+
+  var phX = toCanvas({ x: currentBeatPhase, y: 0 });
+  cx.strokeStyle = 'rgba(255,255,255,0.4)';
+  cx.lineWidth = 1;
+  cx.setLineDash([2,2]);
+  cx.beginPath(); cx.moveTo(phX.x, 0); cx.lineTo(phX.x, H); cx.stroke();
+  cx.setLineDash([]);
+}
+
+function getHandle(px_, py_) {
+  var candidates = [{ key:'p1', p:p1 }, { key:'p2', p:p2 }];
+  for (var i = 0; i < candidates.length; i++) {
+    var c = toCanvas(candidates[i].p);
+    var dx = px_ - c.x, dy = py_ - c.y;
+    if (Math.sqrt(dx*dx + dy*dy) < HANDLE_R + 4) return candidates[i].key;
+  }
+  return null;
+}
+
+cc.addEventListener('mousedown', function(e) {
+  var rect = cc.getBoundingClientRect();
+  var mx = (e.clientX - rect.left) * (cc.width / rect.width);
+  var my = (e.clientY - rect.top)  * (cc.height / rect.height);
+  draggingHandle = getHandle(mx, my);
+});
+window.addEventListener('mouseup', function() { draggingHandle = null; });
+window.addEventListener('mousemove', function(e) {
+  if (!draggingHandle) return;
+  var rect = cc.getBoundingClientRect();
+  var mx = (e.clientX - rect.left) * (cc.width / rect.width);
+  var my = (e.clientY - rect.top)  * (cc.height / rect.height);
+  var n = fromCanvas(mx, my);
+  if (draggingHandle === 'p1') {
+    p1.x = Math.max(0, Math.min(1, n.x));
+    p1.y = Math.max(0, Math.min(1, n.y));
+  } else {
+    p2.x = Math.max(0, Math.min(1, n.x));
+    p2.y = Math.max(0, Math.min(1, n.y));
+  }
+  drawCurve();
+});
+
+var bpm = DEFAULT_BPM;
+var totalTime = 0;
+var BOUNCE_AMP = DEFAULT_BOUNCE;
+var clock = new THREE.Clock();
+var currentBeatPhase = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  var dt = Math.min(clock.getDelta(), 0.05);
+  totalTime += dt;
+
+  currentBeatPhase = (totalTime * bpm / 60) % 1.0;
+
+  var squashVal = sampleByX(currentBeatPhase);
+  var squash = BOUNCE_AMP * squashVal;
+
+  var sx = 1 + squash * 0.30;
+  var sy = 1 - squash * 0.25;
+  carGroup.position.y = 0;
+  carGroup.scale.set(sx, sy, sx);
+
+  shadowBlob.material.opacity = 0.28 + squash * 0.1;
+  shadowBlob.scale.set(sx, 1, sx);
+
+  updateCamera();
+  renderer.render(scene, camera);
+  drawCurve();
+}
+animate();
+
+
+document.getElementById('bpm-val').textContent = DEFAULT_BPM;
+document.getElementById('bounce-val').textContent = DEFAULT_BOUNCE.toFixed(2);
+document.getElementById('bg-color').value = DEFAULT_BG;
+
+document.getElementById('menu-btn').addEventListener('click', function() {
+  document.getElementById('panel').classList.toggle('open');
+});
+document.getElementById('bpm-range').addEventListener('input', function(e) {
+  bpm = parseInt(e.target.value);
+  document.getElementById('bpm-val').textContent = bpm;
+});
+document.getElementById('bounce-range').addEventListener('input', function(e) {
+  BOUNCE_AMP = parseFloat(e.target.value);
+  document.getElementById('bounce-val').textContent = BOUNCE_AMP.toFixed(2);
+});
+document.getElementById('bg-color').addEventListener('input', function(e) {
+  var col = new THREE.Color(e.target.value);
+  scene.background = col.clone();
+  scene.fog = new THREE.FogExp2(col.getHex(), 0.04);
+  groundMat.color.copy(col).multiplyScalar(DEFAULT_GROUND);
+});
+window.addEventListener('resize', function() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
